@@ -1,65 +1,119 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
+import { useEffect, useState, useMemo, useRef } from 'react';
+import ExplorerClient, { ExplorerClientHandle } from '@/components/ExplorerClient';
+import { hygraph } from '@/lib/hygraph';
+import { GET_EXPLORER_DATA } from '@/graphql/queries';
+import { FileNode, Folder, Settings } from '@/types';
+import { SpinnerIcon } from '@phosphor-icons/react';
+import SearchModal from '@/components/SearchModal';
+import TopBar from '@/components/TopBar';
+
+interface ExplorerData {
+  settings: Settings | null;
+  rootFolders: Folder[];
+  rootFiles: FileNode[];
+}
+
+export default function Page() {
+  const [data, setData] = useState<ExplorerData | null>(null);
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const explorerRef = useRef<ExplorerClientHandle | null>(null);
+  const [openSearch, setOpenSearch] = useState<boolean>(false);
+
+  const allSearchableItems = useMemo(() => {
+    if (!data) return [];
+
+    const allFiles: (FileNode & { isFolder: boolean })[] = [];
+
+    const extractFiles = (folders: Folder[]) => {
+      folders.forEach(folder => {
+        folder.files.forEach(file => allFiles.push({ ...file, isFolder: false }));
+        if (folder.subfolders) {
+          extractFiles(folder.subfolders as Folder[]);
+        }
+      });
+    };
+
+    extractFiles(data.rootFolders);
+
+    const foldersWithFlag = data.rootFolders.map(folder => ({ ...folder, isFolder: true }));
+    const filesWithFlag = data.rootFiles.map(file => ({ ...file, isFolder: false }));
+
+    return [...foldersWithFlag, ...filesWithFlag, ...allFiles];
+  }, [data]);
+
+  const filteredItems = useMemo(() => {
+    if (!searchTerm) return allSearchableItems;
+    return allSearchableItems.filter(item =>
+      item.name.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [searchTerm, allSearchableItems]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await hygraph.request<any>(GET_EXPLORER_DATA);
+
+        const settings: Settings | null = res?.settings?.[0] ?? null;
+        const allFolders: Folder[] = res?.folders ?? [];
+        const allFiles: FileNode[] = res?.files ?? [];
+
+        // Filter root folders (those without parent)
+        const rootFolders = allFolders.filter(folder => !folder.parent);
+        // Filter root files (those without folder)
+        const rootFiles = allFiles.filter(file => !file.folder);
+        console.log(allFiles);
+
+        setData({
+          settings,
+          rootFolders,
+          rootFiles
+        });
+      } catch (e) {
+        console.error('Error fetching data:', e);
+        // Fallback when CMS is empty: no crash, just show local assets
+        setData({
+          settings: {
+            artistName: 'Nelson Deus',
+            socials: [],
+          },
+          rootFolders: [],
+          rootFiles: [],
+        });
+      }
+    })();
+  }, []);
+
+  if (!data) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen gap-4">
+        <SpinnerIcon size={32} className='animate-spin' />
+        <p>Loading...</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div className='flex flex-col h-full w-full'>
+      <TopBar setOpenSearch={setOpenSearch} settings={data.settings} />
+      <ExplorerClient
+        ref={explorerRef}
+        settings={data.settings}
+        rootFolders={data.rootFolders}
+        rootFiles={data.rootFiles}
+      />
+
+      {openSearch && (
+        <SearchModal
+          onClose={() => setOpenSearch(false)}
+          searchTerm={searchTerm}
+          setSearchTerm={setSearchTerm}
+          filteredItems={filteredItems}
+          explorerRef={explorerRef}
+          setOpenSearch={setOpenSearch}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+      )}
     </div>
   );
 }
